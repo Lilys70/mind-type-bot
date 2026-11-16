@@ -1,0 +1,382 @@
+{
+  "project": "Проект 4. Telegram-бот «Тип мышления»",
+  "artifact": "схема_бота.json",
+  "version": "финал — тест, результат, заявка и уведомление менеджеру",
+  "code": {
+    "entry_point": "bot.py",
+    "questions": "данные/questions.py",
+    "types": "данные/types.py",
+    "storage": "хранилище/заявки.py",
+    "data_file": "хранилище/заявки.json",
+    "tests": "тесты/test_бот.py — 28 тестов на unittest",
+    "framework": "aiogram 3.7.0",
+    "fsm_storage": "MemoryStorage (состояния живут в памяти процесса)",
+    "proxy": "PROXY_URL из .env, передаётся в AiohttpSession(proxy=...)",
+    "manager": "MANAGER_CHAT_ID из .env: детали заявки уходят менеджеру, без id — печать в консоль с Telegram-id отправителя"
+  },
+  "legend": {
+    "node": "экран: что видит пользователь",
+    "transition": "событие, откуда и куда ведёт, что меняется",
+    "state": "FSM-состояние aiogram: какие события бот принимает",
+    "exit": "точка выхода сценария"
+  },
+  "commands_and_buttons": [
+    {
+      "id": "/start",
+      "type": "command",
+      "label": "/start",
+      "handler": "on_start",
+      "goes_to": "welcome",
+      "available_in": "любой момент",
+      "effect": "state.clear() + приветствие с кнопкой «Начать тест»"
+    },
+    {
+      "id": "/reset",
+      "type": "command",
+      "label": "/reset",
+      "handler": "on_reset",
+      "goes_to": "welcome",
+      "available_in": "любой момент",
+      "effect": "state.clear() + приветствие: сброс из любого шага теста и формы"
+    },
+    {
+      "id": "test",
+      "type": "callback",
+      "label": "Начать тест",
+      "handler": "on_test",
+      "goes_to": "instruction, question",
+      "available_in": "welcome",
+      "effect": "state = answering, data = {index: 0, answers: [], message_id: None}; экран приветствия удаляется, показываются инструкция и вопрос 1"
+    },
+    {
+      "id": "answer:0 … answer:3",
+      "type": "callback",
+      "label": "четыре варианта ответа текущего вопроса",
+      "handler": "on_answer",
+      "goes_to": "question | result",
+      "available_in": "question (state answering)",
+      "effect": "вес варианта добавляется в answers, index + 1, прошлый экран удаляется"
+    },
+    {
+      "id": "book_consult:<type_id>",
+      "type": "callback",
+      "label": "Оставить заявку",
+      "handler": "on_book_consult",
+      "goes_to": "request_name",
+      "available_in": "result",
+      "effect": "state = waiting_name; результат теста берётся из ключей типов в callback_data (при ничьей — два ключа)"
+    }
+  ],
+
+  "nodes": [
+    {
+      "id": "welcome",
+      "type": "экран-команда",
+      "handler": "on_start",
+      "trigger": "/start, /reset",
+      "screen": "Приветствие: тест из 10 вопросов покажет тип мышления, после — описание и профессии",
+      "keyboard": [
+        {
+          "label": "Начать тест",
+          "callback_data": "test"
+        }
+      ],
+      "state": null
+    },
+    {
+      "id": "instruction",
+      "type": "экран",
+      "handler": "on_test",
+      "trigger": "test",
+      "screen": "Инструкция: 10 вопросов по 4 варианта, правильных ответов нет",
+      "keyboard": [],
+      "state": "TestStates.answering",
+      "note": "после инструкции сразу уходит вопрос 1"
+    },
+    {
+      "id": "question",
+      "type": "цикл",
+      "handler": "on_test, on_answer (send_question)",
+      "trigger": "test, answer:0..3",
+      "screen": "«Вопрос N из 10» и текст вопроса",
+      "keyboard": [
+        {
+          "label": "четыре варианта текущего вопроса",
+          "callback_data": "answer:0 … answer:3"
+        }
+      ],
+      "state": "TestStates.answering",
+      "fsm_data": {
+        "index": "номер текущего вопроса, 0..9",
+        "answers": "веса выбранных вариантов: [{\"scores\": {...}}]",
+        "message_id": "id сообщения с активной клавиатурой"
+      },
+      "repeats": "10 раз: index 0 → 9, по одному вопросу на сообщение"
+    },
+    {
+      "id": "result",
+      "type": "экран-выход",
+      "handler": "on_answer (десятый ответ)",
+      "trigger": "answer:* на десятом вопросе",
+      "screen": "Тип мышления, описание и подходящие профессии; при ничьей — оба типа",
+      "keyboard": [
+        {
+          "label": "Оставить заявку",
+          "callback_data": "book_consult:<type_id> (при ничьей два ключа через «:»)"
+        }
+      ],
+      "state": null,
+      "note": "state.clear(); ключи победивших типов передаются в callback_data кнопки"
+    },
+    {
+      "id": "request_name",
+      "type": "ввод текста",
+      "handler": "on_book_consult, on_request_name",
+      "trigger": "book_consult:<type_id>",
+      "screen": "«Как вас зовут?»",
+      "expects": "текст от 2 до 64 символов",
+      "keyboard": [],
+      "state": "RequestStates.waiting_name"
+    },
+    {
+      "id": "request_time_format",
+      "type": "ввод текста",
+      "handler": "on_request_time_format",
+      "trigger": "имя получено",
+      "screen": "«Когда вам удобно созвониться и как удобнее общаться? (Например: завтра после 18:00, Telegram)»",
+      "expects": "текст от 2 до 200 символов",
+      "keyboard": [],
+      "state": "RequestStates.waiting_time_format"
+    },
+    {
+      "id": "request_contact",
+      "type": "ввод текста",
+      "handler": "on_request_contact",
+      "trigger": "время и формат получены",
+      "screen": "«Оставьте ваш контакт для связи (телефон или username)»",
+      "expects": "текст от 3 до 100 символов",
+      "keyboard": [],
+      "state": "RequestStates.waiting_contact"
+    },
+    {
+      "id": "request_thanks",
+      "type": "экран-выход",
+      "handler": "on_request_contact",
+      "trigger": "контакт получен и заявка записана",
+      "screen": "«Спасибо! Мы свяжемся с вами в ближайшее время»",
+      "keyboard": [],
+      "state": null,
+      "note": "сразу после благодарности notify_manager отправляет детали заявки"
+    },
+    {
+      "id": "request_error",
+      "type": "экран ошибки",
+      "handler": "on_request_contact",
+      "trigger": "ошибка записи файла (OSError)",
+      "screen": "«Не удалось сохранить заявку: что-то сломалось на нашей стороне. Отправьте контакт ещё раз или напишите позже»",
+      "keyboard": [],
+      "state": "RequestStates.waiting_contact",
+      "note": "состояние не сбрасывается: человек повторяет только контакт"
+    },
+    {
+      "id": "stale_answer",
+      "type": "защита",
+      "handler": "on_answer, on_stale",
+      "trigger": "answer:* из сообщения, которое уже не активно",
+      "screen": "всплывающее сообщение «Эта кнопка устарела. Нажмите /start, чтобы открыть меню»",
+      "keyboard": [],
+      "state": "TestStates.answering",
+      "note": "message_id сверяется с активным экраном; балл не засчитывается"
+    },
+    {
+      "id": "manager_notification",
+      "type": "служебный",
+      "handler": "notify_manager",
+      "trigger": "заявка сохранена (request_thanks)",
+      "screen": "—",
+      "effect": "MANAGER_CHAT_ID из .env → bot.send_message с деталями; id не задан или не принят → заявка печатается в консоль вместе с Telegram-id отправителя"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "*",
+      "event": "command:/start",
+      "to": "welcome",
+      "action": "state.clear(): прерванный тест или начатая заявка забыты"
+    },
+    {
+      "from": "*",
+      "event": "command:/reset",
+      "to": "welcome",
+      "action": "state.clear() и приветствие: сброс из любого шага"
+    },
+    {
+      "from": "welcome",
+      "event": "callback:test",
+      "to": "instruction → question",
+      "action": "state = answering, index = 0, answers = [], message_id = None; экран приветствия удаляется"
+    },
+    {
+      "from": "question",
+      "event": "callback:answer:0..3",
+      "to": "question | result",
+      "action": "вес варианта добавлен в answers; index + 1; экран вопроса удалён"
+    },
+    {
+      "from": "result",
+      "event": "callback:book_consult:<type_id>",
+      "to": "request_name",
+      "action": "state = waiting_name; result = название типа из ключей в callback_data"
+    },
+    {
+      "from": "request_name",
+      "event": "текст 2-64 символа",
+      "to": "request_time_format",
+      "action": "request_name сохранён, state = waiting_time_format"
+    },
+    {
+      "from": "request_name | request_time_format | request_contact",
+      "event": "неверная длина текста",
+      "to": "тот же экран",
+      "action": "подсказка об ошибке, состояние не меняется"
+    },
+    {
+      "from": "request_time_format",
+      "event": "текст 2-200 символов",
+      "to": "request_contact",
+      "action": "request_time_format сохранён, state = waiting_contact"
+    },
+    {
+      "from": "request_contact",
+      "event": "текст 3-100 символов",
+      "to": "request_thanks | request_error",
+      "action": "save_application(); при успехе state.clear(), благодарность и notify_manager; при OSError подсказка и повтор"
+    },
+    {
+      "from": "request_name | request_time_format | request_contact",
+      "event": "любая команда (текст начинается с «/»)",
+      "to": "welcome",
+      "action": "exit_form_on_command(): команда важнее формы, состояние сбрасывается"
+    },
+    {
+      "from": "question",
+      "event": "callback:answer:* с устаревшего сообщения",
+      "to": "тот же экран",
+      "action": "всплывающее сообщение «Эта кнопка устарела…», балл не засчитан"
+    }
+  ],
+  "states": [
+    {
+      "state": "TestStates.answering",
+      "entered_from": "welcome (test)",
+      "accepts": "callback answer:0..3 от активного экрана",
+      "data": {
+        "index": "0..9",
+        "answers": "список {\"scores\": {...}}",
+        "message_id": "id активного экрана вопроса"
+      },
+      "exits": "question (следующий вопрос), result (после десятого), welcome (/start, /reset)"
+    },
+    {
+      "state": "RequestStates.waiting_name",
+      "entered_from": "result (book_consult:<type_id>)",
+      "accepts": "любой текст пользователя",
+      "data": {
+        "result": "название типа: «Аналитический» или «Аналитический и Гуманитарный»"
+      },
+      "exits": "request_time_format (имя принято), request_name (подсказка), welcome (команда)"
+    },
+    {
+      "state": "RequestStates.waiting_time_format",
+      "entered_from": "request_name",
+      "accepts": "любой текст пользователя",
+      "data": {
+        "result": "название типа",
+        "request_name": "имя из заявки"
+      },
+      "exits": "request_contact (принято), request_time_format (подсказка), welcome (команда)"
+    },
+    {
+      "state": "RequestStates.waiting_contact",
+      "entered_from": "request_time_format",
+      "accepts": "любой текст пользователя",
+      "data": {
+        "result": "название типа",
+        "request_name": "имя из заявки",
+        "request_time_format": "удобное время и формат связи"
+      },
+      "exits": "request_thanks (заявка записана), request_error (ошибка записи), request_contact (подсказка), welcome (команда)"
+    }
+  ],
+  "exits": [
+    {
+      "id": "test_result",
+      "type": "результат теста",
+      "node": "result",
+      "result": "Сумма баллов по четырём типам, победитель или ничья двух типов. Максимум 10 баллов (10 вопросов по 1 баллу)",
+      "state_after": "очищено; ключи победителей переданы в callback_data кнопки"
+    },
+    {
+      "id": "application_saved",
+      "type": "сохранение заявки",
+      "node": "request_thanks",
+      "result": "Запись {timestamp, user_id, name, time_format, contact, result} дописывается в хранилище/заявки.json (indent=4, кириллица читаемая)",
+      "state_after": "очищено"
+    },
+    {
+      "id": "manager_notified",
+      "type": "уведомление",
+      "node": "request_thanks (служебный)",
+      "result": "Детали заявки уходят на MANAGER_CHAT_ID из .env; если id не задан — печать в консоль с Telegram-id отправителя",
+      "state_after": "не меняется"
+    },
+    {
+      "id": "reset",
+      "type": "сброс",
+      "node": "welcome",
+      "result": "Незаконченный тест или начатая заявка отменены, бот вернулся в приветствие",
+      "state_after": "очищено"
+    },
+    {
+      "id": "save_error",
+      "type": "ветка ошибки, не выход",
+      "node": "request_error",
+      "result": "Человек видит «Не удалось сохранить заявку…» и повторяет контакт, не проходя тест и форму заново",
+      "state_after": "waiting_contact сохраняется"
+    }
+  ],
+  "data": {
+    "questions": {
+      "count": 10,
+      "options_per_question": 4,
+      "file": "данные/questions.py"
+    },
+    "types": {
+      "count": 4,
+      "ids": [
+        "analytical",
+        "humanitarian",
+        "creative",
+        "practical"
+      ],
+      "file": "данные/types.py"
+    },
+    "score": {
+      "points_per_answer": 1,
+      "max_total": 10,
+      "tie": "при равных баллах показываются оба типа с описаниями и профессиями"
+    },
+    "application": {
+      "fields": [
+        "timestamp",
+        "user_id",
+        "name",
+        "time_format",
+        "contact",
+        "result"
+      ],
+      "file": "хранилище/заявки.json"
+    }
+  }
+}
+
